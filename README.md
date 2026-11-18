@@ -202,7 +202,7 @@ sbatch --nodes=1 --exclusive --time=02:00:00 -o slurm_output/%x_%j.out \
 
 | Option | Description | Default |
 |---|---|---|
-| `-f`, `--fasta-dir` | HybPiper output directory containing `*_supercontig.fasta` | `~/hybpiper_out` |
+| `-f`, `--fasta-dir` | HybPiper output directory containing `*_supercontig.fasta` | `$HOME/hybpiper_out` |
 | `-o`, `--outdir` | Output directory (**its contents are deleted at start**) | `filtered_genes` |
 | `-gs`, `--min-gene-samples` | % of samples a gene must be present in | `75` |
 | `-sg`, `--min-sample-genes` | % of retained genes a sample must have | `30` |
