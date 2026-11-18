@@ -5,7 +5,7 @@ set -euo pipefail
 mkdir -p slurm_output hybpiper_out
 
 # 1. Environment & Paths
-export PATH="~/.conda/envs/hybpiper/bin:${PATH}"
+export PATH="$HOME/.conda/envs/hybpiper/bin:${PATH}"
 export SHELL=/bin/bash   # GNU parallel needs bash to see exported functions
 
 WORK_DIR="$(realpath hybpiper_out)"

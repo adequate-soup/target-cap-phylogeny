@@ -29,8 +29,8 @@ set -eo pipefail
 export CPUS=${SLURM_CPUS_ON_NODE:-$(nproc)}
 export PARALLEL_SHELL=/bin/bash   # exported bash functions need bash
 
-export HYBPIPER_ENV="~/.conda/envs/hybpiper"
-export ROOTDIR="~/"
+export HYBPIPER_ENV="$HOME/.conda/envs/hybpiper"
+export ROOTDIR="$HOME"
 
 # Environment overrides are honoured (previously these were overwritten)
 GENE_FASTA_DIR="${GENE_FASTA_DIR:-$ROOTDIR/filtered_genes}"   # Output of filter_low_copy.sh
