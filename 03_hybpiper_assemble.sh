@@ -8,10 +8,10 @@ mkdir -p slurm_output hybpiper_out
 export PATH="$HOME/.conda/envs/hybpiper/bin:${PATH}"
 export SHELL=/bin/bash   # GNU parallel needs bash to see exported functions
 
-WORK_DIR="$(realpath hybpiper_out)"
 THREADS_PER_JOB=8
 READS_DIR=""
 TARGET_FILE=""
+NO_CLOBBER=0
 
 # Parse arguments
 while [[ $# -gt 0 ]]; do
@@ -22,6 +22,7 @@ while [[ $# -gt 0 ]]; do
         -t|--target-file) TARGET_FILE="$2"; shift 2 ;;
         -o|--output-dir) WORK_DIR="$2"; shift 2 ;;
         -tj|--threads-per-job) THREADS_PER_JOB="$2"; shift 2 ;;
+        --no-clobber) NO_CLOBBER=1; shift ;;
         *) echo "Unknown option: $1" >&2; exit 1 ;;
     esac
 done
@@ -111,6 +112,14 @@ sample_is_complete() {
     [[ -s "${WORK_DIR}/${sample_id}/${sample_id}_genes_with_seqs.txt" ]]
 }
 
+# True if the sample already has a supercontig FASTA in the output directory
+# (also checks the sample's own subdirectory in case HybPiper wrote it there)
+has_supercontig() {
+    local sample_id="$1"
+    [[ -s "${WORK_DIR}/${sample_id}_supercontig.fasta" || \
+       -s "${WORK_DIR}/${sample_id}/${sample_id}_supercontig.fasta" ]]
+}
+
 # 4. Worker Function
 assemble() {
     local input_reads="$1"
@@ -174,6 +183,11 @@ check_unfinished_with_size() {
     local sample_id
     sample_id="$(get_sample_id "$input_reads")"
 
+    # --no-clobber: skip samples that already have a supercontig FASTA
+    if [[ "${NO_CLOBBER:-0}" -eq 1 ]] && has_supercontig "$sample_id"; then
+        return 0
+    fi
+
     if ! sample_is_complete "$sample_id"; then
         local size1 size2 total_bytes r2
         size1=$(stat -c%s "$input_reads" 2>/dev/null || echo 0)
@@ -188,8 +202,8 @@ check_unfinished_with_size() {
         printf "%d\t%s\n" "$total_bytes" "$input_reads"
     fi
 }
-export -f get_sample_id is_r2 get_r2_path sample_is_complete check_unfinished_with_size
-export WORK_DIR
+export -f get_sample_id is_r2 get_r2_path sample_is_complete has_supercontig check_unfinished_with_size
+export WORK_DIR NO_CLOBBER
 
 # 7. Parallelize Check, Sort Ascending by Size, and Extract File Paths
 readarray -t UNFINISHED_FILES < <(
