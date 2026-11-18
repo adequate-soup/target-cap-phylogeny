@@ -3,6 +3,9 @@
 A set of Bash/Slurm scripts that take raw paired-end target-capture reads (e.g. Angiosperms353 / hybrid-capture data) through read cleaning, HybPiper assembly, paralog/low-copy gene filtering, and multi-copy-aware species-tree inference.
 
 ```
+sequencing runs (multiple lanes / runs per sample)
+   │  00_concat.sh                 (optional) concatenate reads per sample across lanes/directories
+   ˅
 raw reads
    │  01_trim_norm.sh              fastp trimming  (+ optional BBNorm normalization)
    ˅
@@ -29,6 +32,7 @@ All scripts are designed to run on a Slurm cluster node (they read `SLURM_CPUS_O
 
 | Script | Purpose |
 |---|---|
+| `00_concat.sh` | Optional: concatenate per-lane / per-run FASTQs into one R1 + R2 file per sample |
 | `01_trim_norm.sh` | Adapter/quality trimming with fastp; optional depth normalization with BBNorm (via Apptainer) |
 | `02_trunc_to_75.sh` | Optional: randomly subsample reads and truncate to 75 bp; R1 + R2 are concatenated into one single-end file (use this to match older/degraded samples) |
 | `03_hybpiper_assemble.sh` | Runs `hybpiper assemble` and `retrieve_sequences supercontig` for every sample in parallel |
@@ -48,6 +52,7 @@ All scripts are designed to run on a Slurm cluster node (they read `SLURM_CPUS_O
 
 | Script | Tools |
 |---|---|
+| 00 | `parallel` (loaded with `module load gnu-parallel` if available) |
 | 01 | `fastp` (loaded with `module load fastp`); for normalization, `apptainer` and internet access on first run to pull `docker://staphb/bbtools:latest` |
 | 02 | `seqtk`, `pigz`, `parallel` |
 | 03 | [HybPiper v2](https://github.com/mossmatters/HybPiper) (`hybpiper`), BWA, and their dependencies, in a conda env |
@@ -78,7 +83,7 @@ Some paths are hard-coded as placeholders and must be changed for your system:
 | 05 | `MAPPING_FILE` | `$ROOTDIR/data/mapping.txt` | Sample → species map for ASTRAL |
 | 05 | `WORKDIR` | `$ROOTDIR/analysis_pipeline` | All results and logs go here |
 
-`01`, `03` and `05` write Slurm logs to `slurm_output/`; this directory must exist **before** `sbatch` is called, or the job will fail without a log:
+`00`, `01`, `03` and `05` write Slurm logs to `slurm_output/`; this directory must exist **before** `sbatch` is called, or the job will fail without a log:
 
 ```bash
 mkdir -p slurm_output
@@ -89,6 +94,33 @@ mkdir -p slurm_output
 ---
 
 ## Step-by-step usage
+
+### 00 — (Optional) Concatenate reads across lanes / runs
+
+Use this if a sample was sequenced across several lanes or runs (possibly in different directories) and you want a single `<sample>_R1.fastq.gz` / `<sample>_R2.fastq.gz` per sample.
+
+```bash
+mkdir -p slurm_output
+sbatch --nodes=1 --exclusive --time=04:00:00 -o slurm_output/%x_%j.out \
+    00_concat.sh -o raw_reads -i /path/to/run1_fastqs /path/to/run2_fastqs
+
+# or, with an explicit sample list
+sbatch ... 00_concat.sh sample_list.txt -o raw_reads -i /path/to/run1_fastqs /path/to/run2_fastqs
+```
+
+| Argument | Description |
+|---|---|
+| `sample_list.txt` | Optional; must be the **first** argument if given. One sample ID per line (blank lines and lines starting with `#` are ignored). If omitted, samples are inferred from filenames |
+| `-o <dir>` | Output directory for concatenated reads (**required**) |
+| `-i <dir> [<dir> ...]` | One or more input directories (**required**; must be the last flag) |
+
+Notes:
+- **Sample-ID inference (no list given).** From every `*_R1*.fastq.gz` file, everything from `_R1` onward is removed, followed by a trailing lane tag (`_L001`) and a trailing sample-number tag (`_S12`). E.g. `Pap_Plant7_S12_L001_R1_001.fastq.gz` → `Pap_Plant7`. The inferred IDs are printed at the start of the run so you can check them.
+- **Prefix stripping.** If at least 3 samples share the same first underscore-delimited token (e.g. `Pap`), that prefix is removed from the *output* name (`Pap_Plant7` → `Plant7`). If stripping would make two output names collide, those samples keep their full names. Input files are still matched on the original ID. (Change `MIN_PREFIX_COUNT` in the script to adjust.)
+- **Sample-list mode.** Output names are the IDs exactly as written in the list, and each ID is matched as a substring anywhere in the filename (`*<ID>*_R1*.fastq.gz`). Make sure IDs are unique enough, since `Sample1` would also match `Sample10`. (Inferred IDs don't have this problem; they are anchored to the start of the filename.)
+- Files are concatenated in sorted order within each input directory, with directories taken in the order given. R1 and R2 are concatenated separately and must have equal file counts, otherwise the sample is skipped with a warning.
+- Output is `<name>_R1.fastq.gz` and `<name>_R2.fastq.gz`. Existing outputs are skipped, and files are written to a `.tmp` name and renamed, so an interrupted run doesn't leave partial files.
+- Only `*.fastq.gz` files are matched (not `*.fq.gz`).
 
 ### 01 — Trim and normalize reads
 
@@ -131,7 +163,7 @@ sbatch --nodes=1 --exclusive --time=04:00:00 -o slurm_output/%x_%j.out \
 Notes:
 - **Input files must be named `<sample>_R1_trimmed.fastq.gz` and `<sample>_R2_trimmed.fastq.gz`.** Output is `<sample>_trimmed.fastq.gz`, where R1 and R2 (each subsampled with fixed seeds, quality-trimmed with `seqtk trimfq -q 0` and truncated to 75 bp) are concatenated into a single single-end file.
 - Samples with an existing non-trivial output are skipped; the job halts on the first failure (`--halt now,fail=1`).
-- To calculate the total proportion of bases kept after running this script, take (read_length / 75) ⋅ downsample-fraction, (e.g., for 150 bp reads using 0.6 as the ds fraction: (150 / 75) ⋅ 0.6 = 0.3).
+- To calculate the total proportion of bases kept after running this script, take (75 / read_length) ⋅ downsample-fraction, (e.g., for 150 bp reads using 0.6 as the ds fraction: (75 / 150) ⋅ 0.6 = 0.3).
 
 ### 03 — HybPiper assembly
 
@@ -149,12 +181,13 @@ sbatch --nodes=1 --exclusive --time=48:00:00 -o slurm_output/%x_%j.out \
 | `-t`, `--target-file` | Target DNA FASTA (`-t_dna`) (**required**) | — |
 | `-o`, `--output-dir` | Where sample folders and supercontig FASTAs are written | `./hybpiper_out` |
 | `-tj`, `--threads-per-job` | Threads per HybPiper process | `8` |
+| `--no-clobber` | Skip any sample that already has a `<sample>_supercontig.fasta` in the output directory (or its sample folder), even if its HybPiper run isn't marked complete | off |
 
 Notes:
 - Sample IDs are derived from filenames: the last `_R1`/`_R2` token and everything after it is removed, as are trailing `_trimmed`, `_trim`, `_normalized`, `_norm` suffixes. E.g. `Sample_A_R1_trimmed.fastq.gz` → `Sample_A`; `Sample_A_trimmed.fastq.gz` → `Sample_A`.
 - R1 files with a matching R2 are assembled as paired-end; everything else is treated as single-end.
 - Runs `hybpiper assemble --bwa --force_overwrite`, then `hybpiper retrieve_sequences supercontig`, so you get `<sample>/` directories and `<sample>_supercontig.fasta` in the output directory.
-- A sample is considered complete if `<sample>/<sample>_genes_with_seqs.txt` exists and is non-empty. Rerunning only processes unfinished samples, **smallest first**.
+- A sample is considered complete if `<sample>/<sample>_genes_with_seqs.txt` exists and is non-empty. Rerunning only processes unfinished samples, **smallest first**. With `--no-clobber`, samples that already have a supercontig FASTA are also skipped, which is useful when adding new samples to an existing output directory without redoing earlier assemblies.
 - A failed sample is logged and skipped; it does not stop the run.
 - The RAM-per-job figure printed at startup is informational only and is not enforced.
 
@@ -250,6 +283,7 @@ Genes with fewer than 4 taxa or alignments shorter than 100 bp are skipped at th
 mkdir -p slurm_output
 SB="sbatch --nodes=1 --exclusive -o slurm_output/%x_%j.out"
 
+$SB --time=04:00:00 00_concat.sh -o raw_reads -i run1_fastqs run2_fastqs   # optional
 $SB --time=24:00:00 01_trim_norm.sh -i raw_reads -s                  # trim only
 $SB --time=04:00:00 02_trunc_to_75.sh -i raw_reads_trimmed           # optional
 $SB --time=48:00:00 03_hybpiper_assemble.sh -i raw_reads_trimmed -t targets.fasta -o hybpiper_out
@@ -267,6 +301,7 @@ Chain jobs with `--dependency=afterok:<jobid>` if you want them to run unattende
 - **Job fails with no log:** `slurm_output/` didn't exist at submission time.
 - **Nothing happens on rerun:** that's the resume logic working. Check for `[Skip]` messages, output files, or `.skip` markers.
 - **Samples missing downstream:** check `removed_samples.txt` (script 04), HybPiper failures in the Slurm log (script 03), and `logs/*.failed_summary` / `*.skipped_*` (script 05).
+- **Concatenation grabbed the wrong files or skipped a sample (script 00):** check the inferred `ID -> output name` list printed at the top of the log; with a sample list, IDs are matched as substrings, so make them specific.
 - **Paired reads not detected:** the pairing logic relies on `_R1` / `_R2` in the filename.
 - **Command not found inside the job:** make sure the conda env path settings above are correct and the env contains every tool listed in the requirements.
 
