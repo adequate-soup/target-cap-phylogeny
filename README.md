@@ -5,19 +5,19 @@ A set of Bash/Slurm scripts that take raw paired-end target-capture reads (e.g. 
 ```
 raw reads
    │  01_trim_norm.sh              fastp trimming  (+ optional BBNorm normalization)
-   ▼
+   ˅
 trimmed / normalized reads
    │  02_trunc_to_75.sh            (optional) downsample + truncate to 75 bp, merge R1/R2 → single-end
-   ▼
+   ˅
 reads
    │  03_hybpiper_assemble.sh      HybPiper assemble + supercontig retrieval, per sample
-   ▼
+   ˅
 <sample>/ + <sample>_supercontig.fasta
    │  04_stats_filter_low_copy.sh  gene/sample presence filtering, per-gene FASTAs, coverage stats
-   ▼
+   ˅
 filtered_genes/<gene>.fasta
    │  05_new_supercontig_pipeline.sh   MAFFT → TrimAl → TreeShrink → RAxML-NG → ASTRAL (optional constraint tree)
-   ▼
+   ˅
 final_species.tre
 ```
 
