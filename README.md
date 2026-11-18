@@ -1,6 +1,6 @@
 # Target-Capture Phylogenomics Pipeline (HybPiper to ASTRAL)
 
-A set of Bash/Slurm scripts that take raw paired-end target-capture reads (e.g. Angiosperms353 / hybrid-capture data) through read cleaning, HybPiper assembly, paralog/low-copy gene filtering, and multi-copy-aware species-tree inference.
+A set of Bash/Slurm scripts that take raw paired-end target-capture reads (e.g. Angiosperms353 / hybrid-capture data) through read cleaning, HybPiper assembly, paralog/low-copy gene filtering, and species-tree inference from the retained low-copy genes.
 
 ```
 sequencing runs (multiple lanes / runs per sample)
