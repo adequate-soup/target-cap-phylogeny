@@ -8,6 +8,7 @@ mkdir -p slurm_output hybpiper_out
 export PATH="$HOME/.conda/envs/hybpiper/bin:${PATH}"
 export SHELL=/bin/bash   # GNU parallel needs bash to see exported functions
 
+WORK_DIR="$(realpath hybpiper_out)"   # default output dir; override with -o
 THREADS_PER_JOB=8
 READS_DIR=""
 TARGET_FILE=""
