@@ -131,7 +131,7 @@ sbatch --nodes=1 --exclusive --time=04:00:00 -o slurm_output/%x_%j.out \
 Notes:
 - **Input files must be named `<sample>_R1_trimmed.fastq.gz` and `<sample>_R2_trimmed.fastq.gz`.** Output is `<sample>_trimmed.fastq.gz`, where R1 and R2 (each subsampled with fixed seeds, quality-trimmed with `seqtk trimfq -q 0` and truncated to 75 bp) are concatenated into a single single-end file.
 - Samples with an existing non-trivial output are skipped; the job halts on the first failure (`--halt now,fail=1`).
-- To calculate the total proportion of reads kept after running this script, take (read_length - 75) ⋅ downsample-fraction, (e.g., for 150 bp reads using 0.6 as the ds fraction: (150 - 75) ⋅ 0.6 = 0.3).
+- To calculate the total proportion of bases kept after running this script, take (read_length / 75) ⋅ downsample-fraction, (e.g., for 150 bp reads using 0.6 as the ds fraction: (150 / 75) ⋅ 0.6 = 0.3).
 
 ### 03 — HybPiper assembly
 
