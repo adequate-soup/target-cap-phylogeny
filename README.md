@@ -16,7 +16,7 @@ reads
    │  04_stats_filter_low_copy.sh  gene/sample presence filtering, per-gene FASTAs, coverage stats
    ˅
 filtered_genes/<gene>.fasta
-   │  05_new_supercontig_pipeline.sh   MAFFT → TrimAl → TreeShrink → RAxML-NG → ASTRAL (optional constraint tree)
+   │  05_supercontig_pipeline.sh   MAFFT → TrimAl → TreeShrink → RAxML-NG → ASTRAL (optional constraint tree)
    ˅
 final_species.tre
 ```
@@ -33,7 +33,7 @@ All scripts are designed to run on a Slurm cluster node (they read `SLURM_CPUS_O
 | `02_trunc_to_75.sh` | Optional: randomly subsample reads and truncate to 75 bp; R1 + R2 are concatenated into one single-end file (use this on new PE reads if you need to add old 75 bp SE samples to your phylogeny) |
 | `03_hybpiper_assemble.sh` | Runs `hybpiper assemble` and `retrieve_sequences supercontig` for every sample in parallel |
 | `04_stats_filter_low_copy.sh` | Filters genes and samples by presence/length, writes per-gene FASTAs and optional coverage matrix |
-| `05_new_supercontig_pipeline.sh` | Alignment, trimming, outlier removal, gene trees, ASTRAL species tree, optional constrained second pass |
+| `05_supercontig_pipeline.sh` | Alignment, trimming, outlier removal, gene trees, ASTRAL species tree, optional constrained second pass |
 
 ---
 
@@ -200,7 +200,7 @@ First create the sample → species mapping file used by ASTRAL (two columns, wh
 ```bash
 sbatch --nodes=1 --exclusive --time=72:00:00 -o slurm_output/%x_%j.out \
     --export=ALL,GENE_FASTA_DIR=$PWD/filtered_genes,MAPPING_FILE=$PWD/data/mapping.txt \
-    05_new_supercontig_pipeline.sh
+    05_supercontig_pipeline.sh
 ```
 
 | Option | Description | Default |
@@ -217,10 +217,10 @@ Examples:
 
 ```bash
 # Simple run, excluding two samples
-sbatch ... 05_new_supercontig_pipeline.sh -e SampleX SampleY
+sbatch ... 05_supercontig_pipeline.sh -e SampleX SampleY
 
 # Two-pass run with constraint tree (the script resubmits itself)
-sbatch ... 05_new_supercontig_pipeline.sh -rr -bt 30
+sbatch ... 05_supercontig_pipeline.sh -rr -bt 30
 ```
 
 Pipeline stages (each writes into `$WORKDIR`):
@@ -254,7 +254,7 @@ $SB --time=04:00:00 02_trunc_to_75.sh -i raw_reads_trimmed           # optional
 $SB --time=48:00:00 03_hybpiper_assemble.sh -i raw_reads_trimmed -t targets.fasta -o hybpiper_out
 $SB --time=02:00:00 04_stats_filter_low_copy.sh -f hybpiper_out -o filtered_genes
 $SB --time=72:00:00 --export=ALL,GENE_FASTA_DIR=$PWD/filtered_genes,MAPPING_FILE=$PWD/mapping.txt \
-    05_new_supercontig_pipeline.sh -rr
+    05_supercontig_pipeline.sh -rr
 ```
 
 Chain jobs with `--dependency=afterok:<jobid>` if you want them to run unattended.
