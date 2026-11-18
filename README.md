@@ -70,9 +70,9 @@ Some paths are hard-coded as placeholders and must be changed for your system:
 
 | Script | Variable | Default | Notes |
 |---|---|---|---|
-| 03 | `PATH` export (line near top) | `~/.conda/envs/hybpiper/bin` | Point to your conda env's `bin` (use `$HOME`, not `~`, inside quotes) |
-| 04 | `fasta_dir` | `~/hybpiper_out` | Overridable with `-f`; again prefer `$HOME` |
-| 05 | `HYBPIPER_ENV` | `~/.conda/envs/hybpiper` | Conda env to activate |
+| 03 | `PATH` export (line near top) | `"$HOME/.conda/envs/hybpiper/bin"` | Point to your conda env's `bin` |
+| 04 | `fasta_dir` | `"$HOME/hybpiper_out"` | Overridable with `-f` |
+| 05 | `HYBPIPER_ENV` | `"$HOME/.conda/envs/hybpiper"` | Conda env to activate |
 | 05 | `ROOTDIR` | `~/` | Base directory for everything below |
 | 05 | `GENE_FASTA_DIR` | `$ROOTDIR/filtered_genes` | Output of script 04 (override via `--export`) |
 | 05 | `MAPPING_FILE` | `$ROOTDIR/data/mapping.txt` | Sample → species map for ASTRAL |
