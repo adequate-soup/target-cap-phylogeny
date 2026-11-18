@@ -30,7 +30,7 @@ All scripts are designed to run on a Slurm cluster node (they read `SLURM_CPUS_O
 | Script | Purpose |
 |---|---|
 | `01_trim_norm.sh` | Adapter/quality trimming with fastp; optional depth normalization with BBNorm (via Apptainer) |
-| `02_trunc_to_75.sh` | Optional: randomly subsample reads and truncate to 75 bp; R1 + R2 are concatenated into one single-end file (use this on new PE reads if you need to add old 75 bp SE samples to your phylogeny) |
+| `02_trunc_to_75.sh` | Optional: randomly subsample reads and truncate to 75 bp; R1 + R2 are concatenated into one single-end file (use this to match older/degraded samples) |
 | `03_hybpiper_assemble.sh` | Runs `hybpiper assemble` and `retrieve_sequences supercontig` for every sample in parallel |
 | `04_stats_filter_low_copy.sh` | Filters genes and samples by presence/length, writes per-gene FASTAs and optional coverage matrix |
 | `05_supercontig_pipeline.sh` | Alignment, trimming, outlier removal, gene trees, ASTRAL species tree, optional constrained second pass |
