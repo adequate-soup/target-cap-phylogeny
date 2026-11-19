@@ -5,7 +5,7 @@ set -eo pipefail
 # --------------------------------------------------------------------------
 # 0. Input Validation & Argument Parsing
 # --------------------------------------------------------------------------
-# Usage: sbatch superexon_worker_v5.sh [options] [-e sample_to_exclude ...]
+# Usage: sbatch supercontig_pipeline.sh [options] [-e sample_to_exclude ...]
 #   -wd  name of the working directory under $ROOTDIR (default: analysis_pipeline)
 #   -gc  generate an ASTRAL constraint tree (constraint.tre)
 #   -rr  two-pass mode: build unconstrained gene trees, make the constraint
