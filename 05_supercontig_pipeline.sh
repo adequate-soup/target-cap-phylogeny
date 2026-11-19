@@ -5,7 +5,8 @@ set -eo pipefail
 # --------------------------------------------------------------------------
 # 0. Input Validation & Argument Parsing
 # --------------------------------------------------------------------------
-# Usage: sbatch superexon_worker_v3.sh [options] [-e sample_to_exclude ...]
+# Usage: sbatch superexon_worker_v5.sh [options] [-e sample_to_exclude ...]
+#   -wd  name of the working directory under $ROOTDIR (default: analysis_pipeline)
 #   -gc  generate an ASTRAL constraint tree (constraint.tre)
 #   -rr  two-pass mode: build unconstrained gene trees, make the constraint
 #        tree (implies -gc), then resubmit this script with -cp constraint.tre.
@@ -13,7 +14,8 @@ set -eo pipefail
 #        the final species tree from those trees.
 #   -cp  path to a constraint tree (relative paths are taken from $WORKDIR)
 #   -bt  bootstrap collapse threshold      -tp  TreeShrink quantile
-#   -tt  TrimAl gap threshold              -e   sample names to exclude (LAST option)
+#   -tt  manual TrimAl -gt threshold (default: -automated1)
+#   -e   sample names to exclude (must be the LAST option)
 #
 # THIS VERSION NEVER DELETES FILES. It is resumable at two levels:
 #   - step level: a .skip marker in $SKIP_DIR skips a whole finished step
@@ -21,10 +23,11 @@ set -eo pipefail
 # To force a step to rerun, move its output directory aside and delete its
 # .skip marker by hand.
 #
-# INPUT: per-gene FASTAs from filter_low_copy.sh (<gene>.fasta, headers like
-# ">SAMPLE_paralog_1"). Override the location with:
-#   sbatch --export=ALL,GENE_FASTA_DIR=/path/to/filtered_genes superexon_worker_v3.sh
-# Optional: MAPPING_FILE = two-column "sample species" file (see step 6).
+# INPUT: per-gene FASTAs from filter_low_copy.sh (<gene>.fasta, one sequence
+# per sample, headers like ">SAMPLE"). Override the location with:
+#   sbatch --export=ALL,GENE_FASTA_DIR=/path/to/filtered_genes superexon_worker_v5.sh
+# Optional: MAPPING_FILE = ASTRAL "sample species" mapping (see step 6). If it is
+# missing, every sample is treated as its own species.
 
 export CPUS=${SLURM_CPUS_ON_NODE:-$(nproc)}
 export PARALLEL_SHELL=/bin/bash   # exported bash functions need bash
@@ -32,16 +35,9 @@ export PARALLEL_SHELL=/bin/bash   # exported bash functions need bash
 export HYBPIPER_ENV="$HOME/.conda/envs/hybpiper"
 export ROOTDIR="$HOME"
 
-# Environment overrides are honoured (previously these were overwritten)
+# Environment overrides are honoured
 GENE_FASTA_DIR="${GENE_FASTA_DIR:-$ROOTDIR/filtered_genes}"   # Output of filter_low_copy.sh
 MAPPING_FILE="${MAPPING_FILE:-$ROOTDIR/data/mapping.txt}"
-
-export WORKDIR="$ROOTDIR/analysis_pipeline"
-export SKIP_DIR="$WORKDIR/skip"
-export LOG_DIR="$WORKDIR/logs"
-
-mkdir -p "$WORKDIR" "$SKIP_DIR" "$LOG_DIR"
-cd "$WORKDIR"
 
 # Timeout ceilings per step (seconds)
 export TIMEOUT_MAFFT=1800      # 30 min
@@ -53,8 +49,11 @@ export TIMEOUT_FINALTREE=7200  # 120 min
 # Timestamp used in joblog/summary names so reruns never overwrite old logs
 export RUN_TAG=$(date +%Y%m%d_%H%M%S)
 
+# ---- Defaults (all may be changed by the options below) ----
+WORKDIR_NAME="analysis_pipeline"
 EXCLUDE_SAMPLES=()   # sample names to drop before step 1
-export TRIMAL_THRESH=0.5
+export TRIMAL_ARGS="-automated1"
+TRIMAL_MANUAL=""
 export BS_COLLAPSE_THRESH=30 # Bootstrap support below which internal nodes are collapsed
 export TREESHRINK_THRESH=0.05
 export MIN_TAXA=4 # Minimum taxa (sequences) and alignment length required for a meaningful tree
@@ -62,24 +61,40 @@ export MIN_ALN_LEN=100
 export CONSTRAINT_TREE_STR=""   # "--tree-constraint <file>" (intentionally unquoted when used)
 GEN_CONSTRAINT_TREE=0
 RERUN_WITH_CONSTRAINT_TREE=0
+CONSTRAINT_TREE_ARG=""
 CONSTRAINT_TREE_FILE=""
 
-# Parse arguments
+# Parse arguments. This only RECORDS values; anything derived from them
+# (WORKDIR, constraint path, ...) is computed after the loop.
 while [[ $# -gt 0 ]]; do
     case "$1" in
         -gc|--gen-constraint-tree) GEN_CONSTRAINT_TREE=1; shift 1 ;;
         -rr|--rerun-with-constraint) RERUN_WITH_CONSTRAINT_TREE=1; shift 1 ;;
-        -cp|--constraint-tree-path)
-            case "$2" in /*) CONSTRAINT_TREE_FILE="$2" ;; *) CONSTRAINT_TREE_FILE="$WORKDIR/$2" ;; esac
-            CONSTRAINT_TREE_STR="--tree-constraint $CONSTRAINT_TREE_FILE"; shift 2 ;;
-        -wd|--working-directory-name) WORKDIR="$ROOTDIR/$2"; shift 2 ;;
+        -cp|--constraint-tree-path) CONSTRAINT_TREE_ARG="$2"; shift 2 ;;
+        -wd|--working-directory-name) WORKDIR_NAME="$2"; shift 2 ;;
         -bt|--bs-collapse-thresh) BS_COLLAPSE_THRESH="$2"; shift 2 ;;
         -tp|--treeshrink-thresh) TREESHRINK_THRESH="$2"; shift 2 ;;
-        -tt|--trimal-thresh) TRIMAL_THRESH="$2"; shift 2 ;;
+        -tt|--trimal-thresh) TRIMAL_ARGS="-gt $2"; TRIMAL_MANUAL="$2"; shift 2 ;;
         -e|--exclude-samples) shift 1; EXCLUDE_SAMPLES=("$@"); break ;;
         *) echo "Unknown option: $1" >&2; exit 1 ;;
     esac
 done
+
+# ---- Everything that depends on parsed values goes AFTER the loop ----
+export WORKDIR="$ROOTDIR/$WORKDIR_NAME"
+export SKIP_DIR="$WORKDIR/skip"
+export LOG_DIR="$WORKDIR/logs"
+
+mkdir -p "$WORKDIR" "$SKIP_DIR" "$LOG_DIR"
+cd "$WORKDIR"
+
+if [[ -n "$CONSTRAINT_TREE_ARG" ]]; then
+    case "$CONSTRAINT_TREE_ARG" in
+        /*) CONSTRAINT_TREE_FILE="$CONSTRAINT_TREE_ARG" ;;
+        *)  CONSTRAINT_TREE_FILE="$WORKDIR/$CONSTRAINT_TREE_ARG" ;;
+    esac
+    CONSTRAINT_TREE_STR="--tree-constraint $CONSTRAINT_TREE_FILE"
+fi
 
 # -rr needs a constraint tree to resubmit with
 if [[ "$RERUN_WITH_CONSTRAINT_TREE" = 1 ]]; then GEN_CONSTRAINT_TREE=1; fi
@@ -94,6 +109,7 @@ fi
 if [[ -n "$CONSTRAINT_TREE_STR" ]]; then CTAG="_constrained"; else CTAG=""; fi
 
 # Conda activation
+source /global/software/rocky-8.x86_64/manual/modules/langs/anaconda3/2024.02-1/etc/profile.d/conda.sh
 conda activate "$HYBPIPER_ENV"
 
 for tool in parallel mafft trimal raxml-ng run_treeshrink.py astral4 nw_ed nw_labels nw_topology; do
@@ -125,14 +141,15 @@ filter_treeshrink() {
 }
 export -f filter_treeshrink
 
-# Sample-exclusion helper (used in parallel). Headers look like
-# ">SAMPLE_paralog_N"; strip the suffix and compare EXACTLY (no regex).
+# Sample-exclusion helper (used in parallel). Headers look like ">SAMPLE";
+# the first word of each header is compared EXACTLY to the exclusion list
+# (no regex).
 filter_excluded() {
     local f=$1
     local gene=$(basename "$f" .fasta)
     local out="$FILTER_INDIR/${gene}.fasta"
     awk 'NR==FNR{ex[$1]; next}
-         /^>/{h=substr($1,2); sub(/_paralog_[0-9]+$/,"",h); keep=!(h in ex)}
+         /^>/{h=substr($1,2); keep=!(h in ex)}
          keep' "$LOG_DIR/excluded_samples.txt" "$f" > "$out"
     if [ ! -s "$out" ]; then
         echo "$gene: no sequences remain after sample exclusion" >> "$LOG_DIR/0_empty_after_filter.log"
@@ -146,8 +163,9 @@ export -f filter_excluded
 
 echo "======================================================"
 echo "Run tag: $RUN_TAG"
+echo "Working directory: $WORKDIR"
 echo "Input genes: $GENE_FASTA_DIR"
-echo "TrimAl gap threshold (-gt, min fraction of non-gap): ${TRIMAL_THRESH}"
+echo "TrimAl settings: ${TRIMAL_ARGS}"
 echo "TreeShrink quantile: ${TREESHRINK_THRESH}"
 echo "Collapsing nodes below support thresh: ${BS_COLLAPSE_THRESH}"
 echo "Constraint tree: ${CONSTRAINT_TREE_FILE:-none}"
@@ -225,10 +243,10 @@ if [[ ! -f $SKIP_DIR/1_mafft.skip ]]; then
 fi
 
 # --------------------------
-# 2. TrimAl Trimming (Relaxed for Target-Capture Flanks)
+# 2. TrimAl Trimming
 # --------------------------
 if [[ ! -f $SKIP_DIR/2_trimal.skip ]]; then
-    echo "Running TrimAl..."
+    echo "Running TrimAl ($TRIMAL_ARGS)..."
 
     find "$ALIGN_DIR" -maxdepth 1 -name "*.fa" | parallel --joblog "$LOG_DIR/2_trimal.${RUN_TAG}.joblog" -j "$CPUS" '
         aln={}
@@ -237,7 +255,7 @@ if [[ ! -f $SKIP_DIR/2_trimal.skip ]]; then
         [ -s "$out" ] && exit 0
         if [ -s "$aln" ]; then
             # write to .part, rename only on success, so a timeout never leaves a truncated alignment
-            if timeout "$TIMEOUT_TRIMAL" trimal -in "$aln" -out "$out.part" -gt "$TRIMAL_THRESH" -fasta && [ -s "$out.part" ]; then
+            if timeout "$TIMEOUT_TRIMAL" trimal -in "$aln" -out "$out.part" $TRIMAL_ARGS -fasta && [ -s "$out.part" ]; then
                 mv "$out.part" "$out"
             else
                 echo "$gene: trimal failed, timed out, or produced an empty alignment" >> "$LOG_DIR/2_trimal.empty"
@@ -308,7 +326,10 @@ fi
 if [[ ! -f $SKIP_DIR/5_final_trees${CTAG}.skip ]]; then
     echo "Re-estimating gene trees (GTR+G) with bootstrapping & collapsing support <$BS_COLLAPSE_THRESH..."
 
+    # Braces are kept in variables: written literally inside the parallel command
+    # string, "{3}" would be read as a GNU parallel replacement string.
     export BS_TREES="autoMRE{30}"
+    export START_TREES="pars{3}"
 
     find "$FILTERED_DIR" -name "*_clean.fa" | parallel --joblog "$LOG_DIR/5_final_trees${CTAG}.${RUN_TAG}.joblog" -j "$CPUS" '
         aln={}
@@ -330,9 +351,8 @@ if [[ ! -f $SKIP_DIR/5_final_trees${CTAG}.skip ]]; then
             exit 0
         fi
 
-        # --all = ML search + bootstrapping; writes final.raxml.support
-        #timeout "$TIMEOUT_FINALTREE" raxml-ng --all --msa "$aln" --model GTR+G --threads 1 --prefix "$gdir/final" --seed 12345 --bs-trees "$BS_TREES" --redo $CONSTRAINT_TREE_STR > "$gdir/final.log" 2>&1
-        timeout "$TIMEOUT_FINALTREE" raxml-ng --tree pars{3} --msa "$aln" --model GTR+G --threads 1 --prefix "$gdir/final" --seed 12345 --bs-trees "$BS_TREES" --redo $CONSTRAINT_TREE_STR > "$gdir/final.log" 2>&1
+        # --all = ML search (3 parsimony starts) + bootstrapping; writes final.raxml.support
+        timeout "$TIMEOUT_FINALTREE" raxml-ng --all --tree "$START_TREES" --msa "$aln" --model GTR+G --threads 1 --prefix "$gdir/final" --seed 12345 --bs-trees "$BS_TREES" --redo $CONSTRAINT_TREE_STR > "$gdir/final.log" 2>&1
         if [ ! -f "$gdir/final.raxml.support" ]; then
             echo "$gene: final raxml-ng tree/bootstrap failed or timed out" >> "$LOG_DIR/5_final_trees.failed"
             exit 0
@@ -356,14 +376,28 @@ fi
 cat "$MULTI_GENE_TREES"/*/final.raxml.collapsed.tre > "$CONCAT_TREE"
 
 # --------------------------
-# 6. ASTRAL species tree (multi-copy)
+# 6. ASTRAL species tree
 # --------------------------
 # Skipped in the first pass of a two-pass (-rr) run; the constrained pass makes it.
+# Gene-tree tips are plain sample names. $MAPPING_FILE ("sample species" per
+# line) maps them to species; without it each sample is its own species.
 if [[ "$RERUN_WITH_CONSTRAINT_TREE" = 0 ]]; then
     echo "Making final species tree with ASTRAL..."
+    ASTRAL_MAP_ARGS=()
+    if [[ -s "$MAPPING_FILE" ]]; then
+        # warn about gene-tree tips with no entry in the mapping file
+        nw_labels -I "$CONCAT_TREE" | sort -u > "tips${CTAG}.txt"
+        awk 'NR==FNR{split($0,a,/[ \t,]+/); if (a[1]!="") m[a[1]]; next}
+             !($1 in m){n++; print "  not in mapping: " $1 > "/dev/stderr"}
+             END{if (n) print "WARNING: " n " tip(s) missing from mapping file" > "/dev/stderr"}' \
+            "$MAPPING_FILE" "tips${CTAG}.txt"
+        ASTRAL_MAP_ARGS=(-a "$MAPPING_FILE")
+    else
+        echo "No mapping file at $MAPPING_FILE; treating each sample as its own species."
+    fi
     astral4 \
         -i "$CONCAT_TREE" \
-        -a "$MAPPING_FILE" \
+        "${ASTRAL_MAP_ARGS[@]}" \
         -o "final_species${CTAG}.tre" \
         -t "$CPUS"
 fi
@@ -396,11 +430,11 @@ if [[ "$RERUN_WITH_CONSTRAINT_TREE" = 1 ]]; then
         exit 1
     fi
     echo "Re-running script with new constraint tree..."
-    resub_args=(-cp "$WORKDIR/constraint.tre"
-                -bt "$BS_COLLAPSE_THRESH"
-                -tp "$TREESHRINK_THRESH"
-                -tt "$TRIMAL_THRESH"
-                -wd "$(basename "$WORKDIR")")
+    resub_args=(-cp "$WORKDIR/constraint.tre" -wd "$WORKDIR_NAME"
+                -bt "$BS_COLLAPSE_THRESH" -tp "$TREESHRINK_THRESH")
+    if [[ -n "$TRIMAL_MANUAL" ]]; then
+        resub_args+=(-tt "$TRIMAL_MANUAL")
+    fi
     if [[ ${#EXCLUDE_SAMPLES[@]} -gt 0 ]]; then
         resub_args+=(-e "${EXCLUDE_SAMPLES[@]}")   # must stay last
     fi

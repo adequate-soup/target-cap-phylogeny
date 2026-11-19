@@ -80,8 +80,8 @@ Some paths are hard-coded as placeholders and must be changed for your system:
 | 05 | `HYBPIPER_ENV` | `$HOME/.conda/envs/hybpiper` | Conda env to activate |
 | 05 | `ROOTDIR` | `$HOME` | Base directory for everything below |
 | 05 | `GENE_FASTA_DIR` | `$ROOTDIR/filtered_genes` | Output of script 04 (override via `--export`) |
-| 05 | `MAPPING_FILE` | `$ROOTDIR/data/mapping.txt` | Sample → species map for ASTRAL |
-| 05 | `WORKDIR` | `$ROOTDIR/analysis_pipeline` | All results and logs go here |
+| 05 | `MAPPING_FILE` | `$ROOTDIR/data/mapping.txt` | Optional sample → species map for ASTRAL (override via `--export`) |
+| 05 | `WORKDIR` | `$ROOTDIR/analysis_pipeline` | All results and logs go here; change the folder name with `-wd` |
 
 `00`, `01`, `03` and `05` write Slurm logs to `slurm_output/`; this directory must exist **before** `sbatch` is called, or the job will fail without a log:
 
@@ -229,7 +229,9 @@ bash 04_stats_filter_low_copy.sh -f hybpiper_out -o stats_only -s
 
 ### 05 — Gene trees and species tree
 
-First create the sample → species mapping file used by ASTRAL (two columns, whitespace-separated: `sample<TAB>species`). Samples that belong to the same species share a species name.
+Gene-tree tips are plain sample names (one sequence per sample per gene, as written by script 04).
+
+Optionally create a sample → species mapping file for ASTRAL (two columns, whitespace-separated: `sample<TAB>species`). Samples that belong to the same species share a species name. Sample names must match the FASTA headers exactly. Before ASTRAL runs, the script writes a warning to the log for any gene-tree tip missing from the file (ASTRAL itself fails on unmapped tips). If the mapping file is absent or empty, every sample is treated as its own species.
 
 ```bash
 sbatch --nodes=1 --exclusive --time=72:00:00 -o slurm_output/%x_%j.out \
@@ -239,12 +241,13 @@ sbatch --nodes=1 --exclusive --time=72:00:00 -o slurm_output/%x_%j.out \
 
 | Option | Description | Default |
 |---|---|---|
+| `-wd <name>` | Name of the working directory under `$ROOTDIR` | `analysis_pipeline` |
 | `-gc` | Also build an ASTRAL constraint tree (`constraint.tre`) | off |
-| `-rr` | Two-pass mode: unconstrained gene trees → constraint tree → automatic `sbatch` resubmission with the constraint (implies `-gc`) | off |
+| `-rr` | Two-pass mode: unconstrained gene trees → constraint tree → automatic `sbatch` resubmission with the constraint (implies `-gc`; see below) | off |
 | `-cp <file>` | Use an existing constraint tree (absolute path, or relative to `$WORKDIR`) | none |
 | `-bt <n>` | Collapse gene-tree nodes with bootstrap support below *n* | `30` |
 | `-tp <q>` | TreeShrink quantile | `0.05` |
-| `-tt <x>` | TrimAl `-gt` (minimum fraction of non-gap sites per column) | `0.5` |
+| `-tt <x>` | Manual TrimAl `-gt` threshold (minimum fraction of non-gap sites per column). Without it, TrimAl runs with `-automated1` | `-automated1` |
 | `-e <s1> <s2> …` | Samples to exclude; **must be the last option** | none |
 
 Examples:
@@ -255,7 +258,18 @@ sbatch ... 05_supercontig_pipeline.sh -e SampleX SampleY
 
 # Two-pass run with constraint tree (the script resubmits itself)
 sbatch ... 05_supercontig_pipeline.sh -rr -bt 30
+
+# Separate analysis with a manual TrimAl threshold in its own working directory
+sbatch ... 05_supercontig_pipeline.sh -wd analysis_gt50 -tt 0.5
 ```
+
+**Two-pass mode (`-rr`).**
+1. *First pass:* runs steps 0–5 (unconstrained gene trees) and writes `constraint.tre`. No species tree is made in this pass.
+2. *Second pass:* the script submits itself again with `-cp constraint.tre`, passing along `-wd`, `-bt`, `-tp`, `-tt` (if set) and `-e`. Steps 0–4 are reused through the `skip/` markers. Gene trees are re-estimated under the constraint into `5_gene_trees_constrained/`, and `final_species_constrained.tre` is built from them.
+
+Without `-rr`, a single pass writes `final_species.tre` (plus `constraint.tre` if `-gc` is given).
+
+> **Resubmission and Slurm options.** The automatic resubmission runs a plain `sbatch` on the script, so the second job does **not** inherit options you gave on the command line for the first (`--exclusive`, `--time`, `-o`, partition/account, ...). Since the script has no `#SBATCH` headers, add the options you need to the `sbatch "$0" ...` line at the bottom of the script (e.g. `sbatch --nodes=1 --exclusive --time=72:00:00 -o slurm_output/%x_%j.out "$0" ...`), or the second job will run with your cluster's defaults. With no `-o`, its log is written as `slurm-<jobid>.out` in `$WORKDIR`.
 
 Pipeline stages (each writes into `$WORKDIR`):
 
@@ -263,10 +277,10 @@ Pipeline stages (each writes into `$WORKDIR`):
 |---|---|
 | `0_sample_filtered/` | Excluded samples removed (or symlinks to input) |
 | `1_initial_alignments/` | MAFFT `--auto` alignments |
-| `2_trimmed_alignments/` | TrimAl-trimmed alignments |
-| `3_quick_trees/` | Quick RAxML-NG (HKY+G) trees + TreeShrink |
+| `2_trimmed_alignments/` | TrimAl-trimmed alignments (`-automated1` by default, or `-gt` from `-tt`) |
+| `3_quick_trees/` | Quick RAxML-NG (HKY+G) trees + TreeShrink (run per gene) |
 | `4_filtered_alignments/` | Alignments with TreeShrink outliers removed (`*_clean.fa`) |
-| `5_gene_trees[_constrained]/` | Final GTR+G RAxML-NG trees with bootstraps; low-support nodes collapsed; `concat.tre` |
+| `5_gene_trees[_constrained]/` | Final GTR+G RAxML-NG trees (3 parsimony starts, up to 30 bootstrap replicates via `autoMRE`); nodes below `-bt` collapsed; `concat.tre` |
 | `final_species[_constrained].tre` | ASTRAL species tree |
 | `constraint.tre` | With `-gc`/`-rr`: ASTRAL topology with nodes under 0.975 support collapsed |
 | `logs/`, `skip/` | Logs and per-step completion markers |
@@ -274,6 +288,8 @@ Pipeline stages (each writes into `$WORKDIR`):
 Genes with fewer than 4 taxa or alignments shorter than 100 bp are skipped at the tree-building steps (see `MIN_TAXA`, `MIN_ALN_LEN` near the top of the script). Per-step timeouts are also set there.
 
 **Resuming / rerunning a step.** The script never deletes anything. Each finished step leaves a marker in `skip/`, and each gene is skipped if its output already exists. To force a step to rerun, move its output directory aside and delete the matching `skip/*.skip` file.
+
+**Changing settings.** Because finished steps are skipped, changing `-tt`, `-tp` or `-e` on a rerun in an existing `$WORKDIR` has no effect on steps that already finished. Either reset those steps as above or, simpler, use a new `-wd` name so the analysis starts clean. (Changing `-bt` only affects step 5, which has its own marker.)
 
 ---
 
@@ -302,6 +318,8 @@ Chain jobs with `--dependency=afterok:<jobid>` if you want them to run unattende
 - **Nothing happens on rerun:** that's the resume logic working. Check for `[Skip]` messages, output files, or `.skip` markers.
 - **Samples missing downstream:** check `removed_samples.txt` (script 04), HybPiper failures in the Slurm log (script 03), and `logs/*.failed_summary` / `*.skipped_*` (script 05).
 - **Concatenation grabbed the wrong files or skipped a sample (script 00):** check the inferred `ID -> output name` list printed at the top of the log; with a sample list, IDs are matched as substrings, so make them specific.
+- **ASTRAL reports unknown or unmapped taxa (script 05):** look for `not in mapping:` lines in the log. Sample names in `mapping.txt` must match the FASTA headers exactly.
+- **Second pass (`-rr`) ran with the wrong resources or has no log in `slurm_output/`:** the resubmitted job doesn't inherit command-line `sbatch` options; see the note under script 05.
 - **Paired reads not detected:** the pairing logic relies on `_R1` / `_R2` in the filename.
 - **Command not found inside the job:** make sure the conda env path settings above are correct and the env contains every tool listed in the requirements.
 
