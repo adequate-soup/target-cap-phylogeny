@@ -108,8 +108,6 @@ fi
 # otherwise every gene is "already done" and the rerun does nothing.
 if [[ -n "$CONSTRAINT_TREE_STR" ]]; then CTAG="_constrained"; else CTAG=""; fi
 
-# Conda activation
-source /global/software/rocky-8.x86_64/manual/modules/langs/anaconda3/2024.02-1/etc/profile.d/conda.sh
 conda activate "$HYBPIPER_ENV"
 
 for tool in parallel mafft trimal raxml-ng run_treeshrink.py astral4 nw_ed nw_labels nw_topology; do
